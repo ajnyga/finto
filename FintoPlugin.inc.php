@@ -3,9 +3,9 @@
 /**
  * @file fintoPlugin.inc.php
  *
- * Copyright (c) 2013-2019 Simon Fraser University Library
- * Copyright (c) 2003-2019 John Willinsky
- * Distributed under the GNU GPL v2. For full terms see the file docs/COPYING.
+ * Copyright (c) 2013-2021 Simon Fraser University Library
+ * Copyright (c) 2003-2021 John Willinsky
+ * Distributed under the GNU GPL v3. For full terms see the file docs/COPYING.
  *
  * @class fintoPlugin
  * @ingroup plugins_generic_finto
@@ -33,85 +33,88 @@ class FintoPlugin extends GenericPlugin {
     function register($category, $path, $mainContextId = NULL) {
 		$success = parent::register($category, $path);
 		if ($success && $this->getEnabled()) {
-				HookRegistry::register('TemplateResource::getFilename', array($this, 'handleFormDisplay'));
+				HookRegistry::register('Template::Workflow', array($this, 'addCustomAutosuggest'));
+				HookRegistry::register('TemplateManager::display',array($this, 'hideNativeAutosuggest'));
         }
 		return $success;
 	}
 
-	function handleFormDisplay($hookName, $args) {
-		$request = PKPApplication::getRequest();
-		$templateMgr = TemplateManager::getManager($request);
-		$template =& $args[1];
-		switch ($template) {
-			case 'submission/submissionMetadataFormFields.tpl':
-				$templateMgr->registerFilter("output", array($this, 'keywordsFilter'));
-				break;
+	/**
+	 * Add custom js for backend and frontend
+	 */
+	function hideNativeAutosuggest($hookName, $params) {
+		$template =& $params[1];
+		if ($template !== 'workflow/workflow.tpl') {
+			return false;
 		}
+
+		$templateMgr =& $params[0];
+		$templateMgr->addStylesheet(
+			"ObjectsForReviewGridHandlerStyles",
+			"div[id^='metadata-keywords-autosuggest'] .autosuggest__results-container{ position: absolute; left: -9999px; }",
+			[
+				"inline" => true,
+				"contexts" => "backend",
+			]
+		);
+
 		return false;
 	}
 
 	/**
-	 * Output filter adds Finto to keyword fields by overriding the existing controlled vocabulary settings
-	 * @param $output string
-	 * @param $templateMgr TemplateManager
-	 * @return $string
+	 * Add YSO autoSuggest scripts for keywords
+	 * @param $hookName string
+	 * @param $params array
 	 */
-	function keywordsFilter($output, $templateMgr) {
-
-		$endPoint = '</script>';
-
-		// en_US
-		$startPoint = 'en_US-keywords\]\[\]",';
-		$newscript = $this->ysoTagit('en');
-		$output = preg_replace('#('.$startPoint.')(.*?)('.$endPoint.')#si', '$1'.$newscript.'$3', $output, 1);
-
-		// fi_FI
-		$startPoint = 'fi_FI-keywords\]\[\]",';
-		$newscript = $this->ysoTagit('fi');
-		$output = preg_replace('#('.$startPoint.')(.*?)('.$endPoint.')#si', '$1'.$newscript.'$3', $output, 1);
-
-		// sv_SE
-		$startPoint = 'sv_SE-keywords\]\[\]",';
-		$newscript = $this->ysoTagit('sv');
-		$output = preg_replace('#('.$startPoint.')(.*?)('.$endPoint.')#si', '$1'.$newscript.'$3', $output, 1);		
-
-		if (stristr($output, '-keywords][]')){
-			$templateMgr->unregisterFilter('output', array($this, 'keywordsFilter'));
-		}
-
-		return $output;
+	function addCustomAutosuggest($hookName, $params) {
+		$output =& $params[2];
+		$output .= $this->ysoAutosuggest('en_US','en');
+		$output .= $this->ysoAutosuggest('fi_FI','fi');
+		$output .= $this->ysoAutosuggest('sv_SE','sv');
+		return false;
 	}
-	
+
+
 	/**
-	 * Get YSO tagit settings for selected locale
-	 * @param $locale string
+	 * Get YSO autosuggest api script for selected locale
+	 * @param $localeField string
+	 * @param $localeApi string
 	 * @return $string
 	 */
-	function ysoTagit($locale){
-		return "allowSpaces: true,
-				tagSource: function(request, response){
-						$.ajax({
-							url: 'https://api.finto.fi/rest/v1/search?vocab=yso&lang=" . $locale . "',
-							dataType: 'json',
-							data: {
-								query: request.term + '*'
-							},
-							success: 
-										function( data ) {
+	function ysoAutosuggest($localeField, $localeApi){
+		return "
+			<script>
+				$( function() {
+					$( '#metadata-keywords-control-" . $localeField . "' ).autocomplete({
+						source: function( request, response ) {
+							$.ajax( {
+								url: 'https://api.finto.fi/rest/v1/search?vocab=yso&lang=" . $localeApi . "',
+								dataType: 'json',
+								data: {
+									query: request.term + '*'
+								},
+								success:
+									function( data ) {
 										var output = data.results;
 										response($.map(data.results, function(item) {
-											return {
-												label: item.prefLabel + ' [' + item.uri + ']',
-												value: item.prefLabel + ' [' + item.uri + ']'
-											}
-										}));
-							}	
-							
-						});
-				}
-			});
-
-		});";
+										return {
+											label: item.prefLabel + ' [' + item.uri + ']',
+											value: item.prefLabel + ' [' + item.uri + ']'
+									}
+								}));
+							}
+						} );
+						},
+						minLength: 2,
+						autoFocus: true,
+						select: function(){
+							$( '#metadata-keywords-control-" . $localeField . "' ).focus().trigger({type: 'keypress', which: 50, keyCode: 50});
+						}
+					} );
+				} );
+			</script>";
 	}
+
 }
+
 ?>
